@@ -221,13 +221,19 @@ class Pipeline:
         total_duration_sec = len(audio) / 1000.0
 
         # Handle duration limit
-        processing_path = audio_path
         if duration_limit is not None and duration_limit < total_duration_sec:
             log(f"Limiting processing to first {duration_limit:.0f} seconds")
             processing_path = self._extract_audio_segment(
                 audio_path, 0, duration_limit
             )
             total_duration_sec = duration_limit
+        else:
+            # Always convert to WAV for consistent sample counts
+            # (MP3 files can cause pyannote sample count mismatches)
+            log("Converting audio to WAV format...")
+            processing_path = self._extract_audio_segment(
+                audio_path, 0, total_duration_sec
+            )
 
         try:
             # Step 1: Diarization
@@ -319,8 +325,9 @@ class Pipeline:
         audio = AudioSegment.from_file(str(audio_path))
         segment = audio[int(start * 1000):int(end * 1000)]
 
-        # Export as WAV with 16kHz sample rate for pyannote compatibility
-        segment = segment.set_frame_rate(16000).set_channels(1)
+        # Convert to mono but keep original sample rate
+        # pyannote handles resampling internally
+        segment = segment.set_channels(1)
 
         temp_file = tempfile.NamedTemporaryFile(
             suffix=".wav",
