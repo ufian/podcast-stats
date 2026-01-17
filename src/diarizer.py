@@ -25,11 +25,15 @@ class DiarizationSegment:
 class TqdmProgressHook:
     """Progress hook for pyannote pipeline using tqdm."""
 
+    # Steps that are called once (no progress updates)
+    INSTANT_STEPS = {"speaker_counting", "clustering"}
+
     def __init__(self):
         self.pbar: tqdm | None = None
         self.current_step = 0
         self.current_total = 0
         self.last_step_name = ""
+        self.shown_steps: set[str] = set()
 
     def __call__(
         self,
@@ -42,13 +46,20 @@ class TqdmProgressHook:
         """Called by pyannote pipeline during processing."""
         # Track step changes to show current phase
         if step_name != self.last_step_name:
-            self.last_step_name = step_name
-            # Reset for new phase
+            # Close previous progress bar
             if self.pbar is not None:
                 self.pbar.close()
                 self.pbar = None
+
+            self.last_step_name = step_name
             self.current_step = 0
             self.current_total = 0
+
+            # For instant steps (called once without progress), show completion
+            if step_name in self.INSTANT_STEPS and step_name not in self.shown_steps:
+                self.shown_steps.add(step_name)
+                tqdm.write(f"  Diarization ({step_name}): done")
+                return
 
         if completed is not None:
             # Create or update progress bar
