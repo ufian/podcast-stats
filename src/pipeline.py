@@ -399,35 +399,37 @@ class Pipeline:
     def _transcribe_with_openai(
         self,
         audio_path: Path,
-        diarization_segments: list[DiarizationSegment]
+        diarization_segments: list[DiarizationSegment],
+        chunk_duration_sec: float = 60.0
     ) -> list[TranscriptionSegment]:
-        """Transcribe entirely with OpenAI API."""
-        text = self.openai_transcriber.transcribe_file(audio_path)
+        """Transcribe entirely with OpenAI API in chunks with timestamps.
 
-        # Create pseudo-segments based on diarization timing
-        # This is a simplified approach - OpenAI doesn't give word timestamps
+        Args:
+            audio_path: Path to audio file
+            diarization_segments: Diarization segments (used for fallback)
+            chunk_duration_sec: Duration of each chunk sent to OpenAI (default 60s)
+
+        Returns:
+            List of TranscriptionSegment objects with proper timestamps
+        """
+        # Use the new timestamp-aware transcription
+        openai_segments = self.openai_transcriber.transcribe_with_timestamps(
+            audio_path,
+            chunk_duration_sec=chunk_duration_sec
+        )
+
+        # Convert OpenAI segments to TranscriptionSegments
         segments = []
-        for diar_seg in diarization_segments:
-            segments.append(TranscriptionSegment(
-                start=diar_seg.start,
-                end=diar_seg.end,
-                text="",  # Will be filled by alignment
-                avg_logprob=0.0,
-                no_speech_prob=0.0
-            ))
-            segments[-1].refined_by_openai = True
-
-        # For full OpenAI mode, we just return the whole text as one segment
-        # and let alignment handle speaker assignment
-        if len(diarization_segments) > 0:
-            segments = [TranscriptionSegment(
-                start=diarization_segments[0].start,
-                end=diarization_segments[-1].end,
-                text=text,
-                avg_logprob=0.0,
-                no_speech_prob=0.0
-            )]
-            segments[0].refined_by_openai = True
+        for seg in openai_segments:
+            ts = TranscriptionSegment(
+                start=seg.start,
+                end=seg.end,
+                text=seg.text,
+                avg_logprob=seg.avg_logprob,
+                no_speech_prob=seg.no_speech_prob
+            )
+            ts.refined_by_openai = True
+            segments.append(ts)
 
         return segments
 

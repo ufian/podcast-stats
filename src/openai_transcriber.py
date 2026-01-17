@@ -2,10 +2,23 @@
 
 import os
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 from openai import OpenAI
 from pydub import AudioSegment
+from tqdm import tqdm
+
+
+@dataclass
+class OpenAISegment:
+    """A transcribed segment from OpenAI verbose JSON response."""
+
+    start: float
+    end: float
+    text: str
+    avg_logprob: float = 0.0
+    no_speech_prob: float = 0.0
 
 
 class OpenAITranscriber:
@@ -184,6 +197,91 @@ class OpenAITranscriber:
                 Path(temp_path).unlink(missing_ok=True)
 
         return " ".join(transcripts)
+
+    def transcribe_with_timestamps(
+        self,
+        audio_path: str | Path,
+        chunk_duration_sec: float = 60.0,
+        language: str = "ru",
+        prompt: str | None = None
+    ) -> list[OpenAISegment]:
+        """Transcribe audio file in chunks and return segments with timestamps.
+
+        Uses OpenAI's verbose_json response format to get segment-level timestamps.
+
+        Args:
+            audio_path: Path to the audio file
+            chunk_duration_sec: Duration of each chunk in seconds (default 60s)
+            language: Language code
+            prompt: Optional prompt to guide transcription
+
+        Returns:
+            List of OpenAISegment objects with timestamps
+        """
+        audio_path = Path(audio_path)
+        if not audio_path.exists():
+            raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+        audio = AudioSegment.from_file(str(audio_path))
+        total_duration_ms = len(audio)
+        chunk_duration_ms = int(chunk_duration_sec * 1000)
+
+        if prompt is None:
+            prompt = "Подкаст на русском языке с техническими терминами на английском"
+
+        all_segments: list[OpenAISegment] = []
+        chunk_starts = list(range(0, total_duration_ms, chunk_duration_ms))
+
+        for chunk_start_ms in tqdm(chunk_starts, desc="OpenAI transcribe",
+                                    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"):
+            chunk_end_ms = min(chunk_start_ms + chunk_duration_ms, total_duration_ms)
+            chunk = audio[chunk_start_ms:chunk_end_ms]
+
+            # Calculate time offset for this chunk
+            time_offset = chunk_start_ms / 1000.0
+
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+                chunk.export(f.name, format="mp3")
+                temp_path = f.name
+
+            try:
+                with open(temp_path, "rb") as audio_file:
+                    response = self.client.audio.transcriptions.create(
+                        model=self.model,
+                        file=audio_file,
+                        language=language,
+                        prompt=prompt,
+                        response_format="verbose_json",
+                        timestamp_granularities=["segment"]
+                    )
+
+                # Track usage for this chunk
+                chunk_duration_minutes = (chunk_end_ms - chunk_start_ms) / 60000.0
+                self.total_minutes_processed += chunk_duration_minutes
+                self.total_cost_usd += chunk_duration_minutes * self.COST_PER_MINUTE_USD
+
+                # Parse segments from response (OpenAI returns Pydantic models)
+                if hasattr(response, 'segments') and response.segments:
+                    for seg in response.segments:
+                        all_segments.append(OpenAISegment(
+                            start=time_offset + getattr(seg, 'start', 0),
+                            end=time_offset + getattr(seg, 'end', 0),
+                            text=getattr(seg, 'text', "").strip(),
+                            avg_logprob=getattr(seg, 'avg_logprob', 0.0),
+                            no_speech_prob=getattr(seg, 'no_speech_prob', 0.0)
+                        ))
+                else:
+                    # Fallback if no segments in response
+                    all_segments.append(OpenAISegment(
+                        start=time_offset,
+                        end=time_offset + (chunk_end_ms - chunk_start_ms) / 1000.0,
+                        text=getattr(response, 'text', "").strip()
+                    ))
+
+            finally:
+                Path(temp_path).unlink(missing_ok=True)
+
+        return all_segments
 
     def get_usage_stats(self) -> dict:
         """Get cumulative usage statistics."""
