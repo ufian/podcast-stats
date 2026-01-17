@@ -31,8 +31,12 @@ def format_duration(seconds: float) -> str:
     return f"{minutes}:{secs:02d}"
 
 
-def create_speaker_callback() -> Callable:
-    """Create an interactive speaker identification callback."""
+def create_speaker_callback(auto_accept_threshold: float = 0.93) -> Callable:
+    """Create an interactive speaker identification callback.
+
+    Args:
+        auto_accept_threshold: Auto-accept matches with similarity >= this value
+    """
 
     def callback(
         detected_speaker: str,
@@ -40,6 +44,15 @@ def create_speaker_callback() -> Callable:
         speaking_time: float
     ) -> tuple[str, str]:
         """Interactive prompt for speaker identification."""
+        # Auto-accept very high confidence matches
+        if matches and matches[0].similarity >= auto_accept_threshold:
+            best_match = matches[0]
+            click.echo(
+                f"  Auto-matched {detected_speaker} → {best_match.known_speaker.name} "
+                f"(similarity: {best_match.similarity:.2f})"
+            )
+            return (best_match.known_speaker.id, best_match.known_speaker.name)
+
         click.echo()
         click.echo(click.style(f"Detected speaker: {detected_speaker}", bold=True))
         click.echo(f"  Speaking time: {format_duration(speaking_time)}")
