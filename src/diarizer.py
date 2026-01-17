@@ -28,6 +28,8 @@ class TqdmProgressHook:
     def __init__(self):
         self.pbar: tqdm | None = None
         self.current_step = 0
+        self.current_total = 0
+        self.last_step_name = ""
 
     def __call__(
         self,
@@ -38,20 +40,40 @@ class TqdmProgressHook:
         completed: int | None = None
     ):
         """Called by pyannote pipeline during processing."""
-        if total is not None and completed is not None:
+        # Track step changes to show current phase
+        if step_name != self.last_step_name:
+            self.last_step_name = step_name
+            # Reset for new phase
+            if self.pbar is not None:
+                self.pbar.close()
+                self.pbar = None
+            self.current_step = 0
+            self.current_total = 0
+
+        if completed is not None:
+            # Create or update progress bar
             if self.pbar is None:
+                # Use total if known, otherwise show spinner-style
+                self.current_total = total if total else 0
                 self.pbar = tqdm(
-                    total=total,
-                    desc="Diarization",
+                    total=self.current_total if self.current_total > 0 else None,
+                    desc=f"Diarization ({step_name})",
                     unit="step",
-                    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"
+                    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]" if self.current_total > 0
+                        else "{desc}: {n_fmt} steps [{elapsed}]"
                 )
 
-            # Update to current completed count
+            # Update progress
             delta = completed - self.current_step
             if delta > 0:
                 self.pbar.update(delta)
                 self.current_step = completed
+
+            # Update total if it changed
+            if total and total != self.current_total and self.current_total == 0:
+                self.current_total = total
+                self.pbar.total = total
+                self.pbar.refresh()
 
     def close(self):
         """Close the progress bar."""
@@ -117,13 +139,19 @@ class Diarizer:
     def diarize(
         self,
         audio_path: str | Path,
-        show_progress: bool = True
+        show_progress: bool = True,
+        num_speakers: int | None = None,
+        min_speakers: int | None = None,
+        max_speakers: int | None = None
     ) -> list[DiarizationSegment]:
         """Perform speaker diarization on an audio file.
 
         Args:
             audio_path: Path to the audio file
             show_progress: Show progress bar during diarization
+            num_speakers: Exact number of speakers (if known, speeds up processing)
+            min_speakers: Minimum number of speakers
+            max_speakers: Maximum number of speakers
 
         Returns:
             List of DiarizationSegment objects with speaker labels
@@ -132,13 +160,23 @@ class Diarizer:
         if not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
+        # Build kwargs for pipeline
+        kwargs = {}
+        if num_speakers is not None:
+            kwargs["num_speakers"] = num_speakers
+        if min_speakers is not None:
+            kwargs["min_speakers"] = min_speakers
+        if max_speakers is not None:
+            kwargs["max_speakers"] = max_speakers
+
         if show_progress:
             # Use progress hook for pyannote pipeline
             hook = TqdmProgressHook()
-            diarization_output = self.pipeline(str(audio_path), hook=hook)
+            kwargs["hook"] = hook
+            diarization_output = self.pipeline(str(audio_path), **kwargs)
             hook.close()
         else:
-            diarization_output = self.pipeline(str(audio_path))
+            diarization_output = self.pipeline(str(audio_path), **kwargs)
 
         # pyannote 4.x returns DiarizeOutput, extract the Annotation
         if hasattr(diarization_output, 'speaker_diarization'):

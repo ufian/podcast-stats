@@ -151,8 +151,24 @@ def cli():
     default="config.yaml",
     help="Path to config file"
 )
+@click.option(
+    "--num-speakers", "-n",
+    type=int,
+    help="Exact number of speakers (speeds up diarization)"
+)
+@click.option(
+    "--min-speakers",
+    type=int,
+    help="Minimum number of speakers"
+)
+@click.option(
+    "--max-speakers",
+    type=int,
+    help="Maximum number of speakers"
+)
 def process(audio_file: str, duration: str | None, openai_all: bool,
-            auto: bool, output: str | None, config: str):
+            auto: bool, output: str | None, config: str,
+            num_speakers: int | None, min_speakers: int | None, max_speakers: int | None):
     """Process an audio file for transcription and speaker diarization.
 
     Example:
@@ -192,7 +208,10 @@ def process(audio_file: str, duration: str | None, openai_all: bool,
             audio_path,
             duration_limit=duration_limit,
             openai_all=openai_all,
-            progress_callback=progress
+            progress_callback=progress,
+            num_speakers=num_speakers,
+            min_speakers=min_speakers,
+            max_speakers=max_speakers
         )
 
         # Save result

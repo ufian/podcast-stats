@@ -82,6 +82,8 @@ class PipelineConfig:
     diarization_model: str = "pyannote/speaker-diarization-3.1"
     embedding_model: str = "pyannote/embedding"
     diarization_device: str = "auto"
+    diarization_min_speakers: int | None = 2
+    diarization_max_speakers: int | None = 6
 
     @classmethod
     def from_yaml(cls, config_path: str | Path) -> "PipelineConfig":
@@ -114,6 +116,8 @@ class PipelineConfig:
             diarization_model=diarization.get("model", "pyannote/speaker-diarization-3.1"),
             embedding_model=diarization.get("embedding_model", "pyannote/embedding"),
             diarization_device=diarization.get("device", "auto"),
+            diarization_min_speakers=diarization.get("min_speakers", 2),
+            diarization_max_speakers=diarization.get("max_speakers", 6),
         )
 
 
@@ -192,7 +196,10 @@ class Pipeline:
         audio_path: str | Path,
         duration_limit: float | None = None,
         openai_all: bool = False,
-        progress_callback: Callable[[str], None] | None = None
+        progress_callback: Callable[[str], None] | None = None,
+        num_speakers: int | None = None,
+        min_speakers: int | None = None,
+        max_speakers: int | None = None
     ) -> ProcessingResult:
         """Process an audio file.
 
@@ -201,6 +208,9 @@ class Pipeline:
             duration_limit: Optional limit on processing duration (seconds)
             openai_all: If True, use OpenAI for all transcription
             progress_callback: Optional callback for progress updates
+            num_speakers: Exact number of speakers (speeds up diarization)
+            min_speakers: Minimum number of speakers
+            max_speakers: Maximum number of speakers
 
         Returns:
             ProcessingResult with all transcription and speaker data
@@ -237,8 +247,17 @@ class Pipeline:
 
         try:
             # Step 1: Diarization
+            # Use CLI args if provided, otherwise fall back to config defaults
+            effective_min_speakers = min_speakers if min_speakers is not None else self.config.diarization_min_speakers
+            effective_max_speakers = max_speakers if max_speakers is not None else self.config.diarization_max_speakers
+
             log("Starting speaker diarization...")
-            diarization_segments = self.diarizer.diarize(processing_path)
+            diarization_segments = self.diarizer.diarize(
+                processing_path,
+                num_speakers=num_speakers,
+                min_speakers=effective_min_speakers,
+                max_speakers=effective_max_speakers
+            )
             log(f"Found {len(set(s.speaker for s in diarization_segments))} speakers")
 
             # Step 2: Transcription
