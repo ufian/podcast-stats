@@ -1,0 +1,36 @@
+openai:
+  api_key: ""             # Get from https://platform.openai.com/api-keys
+  model: "whisper-1"
+
+huggingface:
+  token: ""               # Get from https://huggingface.co/settings/tokens
+
+transcription:
+  # Whisper model to use (tiny, base, small, medium, large-v3)
+  whisper_model: "large-v3"
+  # Device for inference (auto, cpu, cuda, mps)
+  device: "auto"
+  # Compute type (float16, float32, int8) - use int8 for Apple Silicon
+  compute_type: "int8"
+  # Language for transcription
+  language: "ru"
+  # Confidence threshold - segments below this get sent to OpenAI
+  confidence_threshold: 0.7
+  # Log probability threshold (more negative = less confident)
+  avg_logprob_threshold: -1.0
+  # No speech probability threshold
+  no_speech_prob_threshold: 0.5
+  # Always use OpenAI for segments with detected language switches
+  openai_for_code_switching: true
+
+speaker_matching:
+  # Minimum similarity to suggest as match
+  similarity_threshold: 0.75
+  # High confidence match threshold (auto-accept)
+  high_confidence_threshold: 0.85
+
+diarization:
+  # Hugging Face model for diarization
+  model: "pyannote/speaker-diarization-3.1"
+  # Embedding model for speaker matching
+  embedding_model: "pyannote/embedding"
