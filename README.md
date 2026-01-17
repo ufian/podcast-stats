@@ -24,10 +24,10 @@ CLI tool for transcribing Russian podcasts with automatic speaker diarization an
    cd podcast-stats
    ```
 
-2. Create and activate virtual environment:
+2. Create and activate virtual environment with pyenv:
    ```bash
-   python -m venv .venv
-   source .venv/bin/activate
+   pyenv virtualenv 3.13 podcast-stats
+   pyenv local podcast-stats
    ```
 
 3. Install dependencies:

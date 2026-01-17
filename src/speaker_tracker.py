@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 import torch
+from tqdm import tqdm
 
 
 @dataclass
@@ -178,7 +179,7 @@ class SpeakerTracker:
         embeddings = {}
         audio = AudioSegment.from_file(str(audio_path))
 
-        for speaker, segments in speaker_segments.items():
+        for speaker, segments in tqdm(speaker_segments.items(), desc="Extracting embeddings", unit="speaker"):
             # Combine segments for this speaker (up to 60 seconds)
             combined = AudioSegment.empty()
             total_duration = 0

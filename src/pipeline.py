@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 import yaml
 from pydub import AudioSegment
+from tqdm import tqdm
 
 from .diarizer import Diarizer, DiarizationSegment, align_transcription_with_diarization
 from .openai_transcriber import OpenAITranscriber
@@ -330,40 +331,43 @@ class Pipeline:
         log: Callable[[str], None]
     ) -> list[TranscriptionSegment]:
         """Transcribe using hybrid local + OpenAI approach."""
-        segments = list(self.transcriber.transcribe(audio_path))
+        log("Running local Whisper transcription...")
+        segments = list(tqdm(
+            self.transcriber.transcribe(audio_path),
+            desc="Transcribing",
+            unit="seg"
+        ))
         log(f"Local transcription: {len(segments)} segments")
 
-        # Check which segments need OpenAI fallback
-        fallback_count = 0
-        refined_segments = []
-
-        for seg in segments:
-            needs_fallback = seg.needs_fallback(
+        # Find segments needing OpenAI fallback
+        segments_to_refine = [
+            seg for seg in segments
+            if seg.needs_fallback(
                 avg_logprob_threshold=self.config.avg_logprob_threshold,
                 no_speech_prob_threshold=self.config.no_speech_prob_threshold,
                 check_code_switching=self.config.openai_for_code_switching
             )
+        ]
 
-            if needs_fallback:
+        if segments_to_refine:
+            log(f"Refining {len(segments_to_refine)} segments with OpenAI...")
+            for seg in tqdm(segments_to_refine, desc="OpenAI refine", unit="seg"):
                 try:
                     refined_text = self.openai_transcriber.transcribe_segment(
                         audio_path, seg.start, seg.end
                     )
                     seg.text = refined_text
                     seg.refined_by_openai = True
-                    fallback_count += 1
                 except Exception as e:
                     log(f"OpenAI fallback failed for segment {seg.start:.1f}-{seg.end:.1f}: {e}")
                     seg.refined_by_openai = False
-            else:
+
+        # Mark non-refined segments
+        for seg in segments:
+            if not hasattr(seg, 'refined_by_openai') or seg.refined_by_openai is None:
                 seg.refined_by_openai = False
 
-            refined_segments.append(seg)
-
-        if fallback_count > 0:
-            log(f"Refined {fallback_count} segments with OpenAI")
-
-        return refined_segments
+        return segments
 
     def _transcribe_with_openai(
         self,
