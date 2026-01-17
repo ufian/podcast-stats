@@ -1,9 +1,18 @@
 """CLI interface for podcast transcription system."""
 
 import json
+import os
 import sys
+import warnings
 from pathlib import Path
 from typing import Callable
+
+# Suppress PyTorch warnings about std() on small tensors
+warnings.filterwarnings("ignore", message="std\\(\\): degrees of freedom")
+# Suppress lightning checkpoint warnings
+warnings.filterwarnings("ignore", message=".*ModelCheckpoint.*")
+warnings.filterwarnings("ignore", message=".*automatically upgraded.*")
+warnings.filterwarnings("ignore", message=".*Found keys that are not in the model.*")
 
 import click
 

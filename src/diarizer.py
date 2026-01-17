@@ -3,8 +3,10 @@
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import torch
+from tqdm import tqdm
 
 
 @dataclass
@@ -20,15 +22,55 @@ class DiarizationSegment:
         return self.end - self.start
 
 
+class TqdmProgressHook:
+    """Progress hook for pyannote pipeline using tqdm."""
+
+    def __init__(self):
+        self.pbar: tqdm | None = None
+        self.current_step = 0
+
+    def __call__(
+        self,
+        step_name: str,
+        step_artifact: any,
+        file: dict | None = None,
+        total: int | None = None,
+        completed: int | None = None
+    ):
+        """Called by pyannote pipeline during processing."""
+        if total is not None and completed is not None:
+            if self.pbar is None:
+                self.pbar = tqdm(
+                    total=total,
+                    desc="Diarization",
+                    unit="step",
+                    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"
+                )
+
+            # Update to current completed count
+            delta = completed - self.current_step
+            if delta > 0:
+                self.pbar.update(delta)
+                self.current_step = completed
+
+    def close(self):
+        """Close the progress bar."""
+        if self.pbar is not None:
+            self.pbar.close()
+            self.pbar = None
+
+
 class Diarizer:
     """Wrapper for pyannote speaker diarization."""
 
     def __init__(
         self,
         model_name: str = "pyannote/speaker-diarization-3.1",
-        hf_token: str | None = None
+        hf_token: str | None = None,
+        device: str = "auto"
     ):
         self.model_name = model_name
+        self.device = device
         # Use provided token, fall back to env var if empty/None
         self.hf_token = hf_token if hf_token else os.environ.get("HF_TOKEN")
         if not self.hf_token:
@@ -39,6 +81,21 @@ class Diarizer:
                 "https://huggingface.co/pyannote/speaker-diarization-3.1"
             )
         self._pipeline = None
+
+    def _get_device(self) -> torch.device:
+        """Get the torch device based on configuration."""
+        if self.device == "cpu":
+            return torch.device("cpu")
+        elif self.device == "mps":
+            return torch.device("mps")
+        elif self.device == "cuda":
+            return torch.device("cuda")
+        else:  # auto
+            if torch.backends.mps.is_available():
+                return torch.device("mps")
+            elif torch.cuda.is_available():
+                return torch.device("cuda")
+            return torch.device("cpu")
 
     @property
     def pipeline(self):
@@ -51,19 +108,22 @@ class Diarizer:
                 token=self.hf_token
             )
 
-            # Use MPS on Apple Silicon if available
-            if torch.backends.mps.is_available():
-                self._pipeline.to(torch.device("mps"))
-            elif torch.cuda.is_available():
-                self._pipeline.to(torch.device("cuda"))
+            device = self._get_device()
+            if device.type != "cpu":
+                self._pipeline.to(device)
 
         return self._pipeline
 
-    def diarize(self, audio_path: str | Path) -> list[DiarizationSegment]:
+    def diarize(
+        self,
+        audio_path: str | Path,
+        show_progress: bool = True
+    ) -> list[DiarizationSegment]:
         """Perform speaker diarization on an audio file.
 
         Args:
             audio_path: Path to the audio file
+            show_progress: Show progress bar during diarization
 
         Returns:
             List of DiarizationSegment objects with speaker labels
@@ -72,7 +132,13 @@ class Diarizer:
         if not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-        diarization_output = self.pipeline(str(audio_path))
+        if show_progress:
+            # Use progress hook for pyannote pipeline
+            hook = TqdmProgressHook()
+            diarization_output = self.pipeline(str(audio_path), hook=hook)
+            hook.close()
+        else:
+            diarization_output = self.pipeline(str(audio_path))
 
         # pyannote 4.x returns DiarizeOutput, extract the Annotation
         if hasattr(diarization_output, 'speaker_diarization'):

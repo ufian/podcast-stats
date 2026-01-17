@@ -64,10 +64,12 @@ class SpeakerTracker:
         embedding_model: str = "pyannote/embedding",
         hf_token: str | None = None,
         similarity_threshold: float = 0.75,
-        high_confidence_threshold: float = 0.85
+        high_confidence_threshold: float = 0.85,
+        device: str = "auto"
     ):
         self.speakers_path = Path(speakers_path)
         self.embedding_model = embedding_model
+        self.device = device
         # Use provided token, fall back to env var if empty/None
         self.hf_token = hf_token if hf_token else os.environ.get("HF_TOKEN")
         self.similarity_threshold = similarity_threshold
@@ -99,6 +101,21 @@ class SpeakerTracker:
                 ensure_ascii=False
             )
 
+    def _get_device(self) -> torch.device:
+        """Get the torch device based on configuration."""
+        if self.device == "cpu":
+            return torch.device("cpu")
+        elif self.device == "mps":
+            return torch.device("mps")
+        elif self.device == "cuda":
+            return torch.device("cuda")
+        else:  # auto
+            if torch.backends.mps.is_available():
+                return torch.device("mps")
+            elif torch.cuda.is_available():
+                return torch.device("cuda")
+            return torch.device("cpu")
+
     @property
     def embedding_pipeline(self):
         """Lazy load the embedding model."""
@@ -110,11 +127,9 @@ class SpeakerTracker:
                 token=self.hf_token
             )
 
-            # Use MPS on Apple Silicon if available
-            if torch.backends.mps.is_available():
-                model.to(torch.device("mps"))
-            elif torch.cuda.is_available():
-                model.to(torch.device("cuda"))
+            device = self._get_device()
+            if device.type != "cpu":
+                model.to(device)
 
             self._embedding_pipeline = Inference(model, window="whole")
 
@@ -179,7 +194,8 @@ class SpeakerTracker:
         embeddings = {}
         audio = AudioSegment.from_file(str(audio_path))
 
-        for speaker, segments in tqdm(speaker_segments.items(), desc="Extracting embeddings", unit="speaker"):
+        for speaker, segments in tqdm(speaker_segments.items(), desc="Extracting embeddings",
+                                        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"):
             # Combine segments for this speaker (up to 60 seconds)
             combined = AudioSegment.empty()
             total_duration = 0

@@ -81,6 +81,7 @@ class PipelineConfig:
     # Diarization
     diarization_model: str = "pyannote/speaker-diarization-3.1"
     embedding_model: str = "pyannote/embedding"
+    diarization_device: str = "auto"
 
     @classmethod
     def from_yaml(cls, config_path: str | Path) -> "PipelineConfig":
@@ -112,6 +113,7 @@ class PipelineConfig:
             high_confidence_threshold=speaker_matching.get("high_confidence_threshold", 0.85),
             diarization_model=diarization.get("model", "pyannote/speaker-diarization-3.1"),
             embedding_model=diarization.get("embedding_model", "pyannote/embedding"),
+            diarization_device=diarization.get("device", "auto"),
         )
 
 
@@ -167,7 +169,8 @@ class Pipeline:
         if self._diarizer is None:
             self._diarizer = Diarizer(
                 model_name=self.config.diarization_model,
-                hf_token=self.config.hf_token
+                hf_token=self.config.hf_token,
+                device=self.config.diarization_device
             )
         return self._diarizer
 
@@ -179,7 +182,8 @@ class Pipeline:
                 embedding_model=self.config.embedding_model,
                 hf_token=self.config.hf_token,
                 similarity_threshold=self.config.similarity_threshold,
-                high_confidence_threshold=self.config.high_confidence_threshold
+                high_confidence_threshold=self.config.high_confidence_threshold,
+                device=self.config.diarization_device
             )
         return self._speaker_tracker
 
@@ -237,7 +241,7 @@ class Pipeline:
                 segments = self._transcribe_with_openai(processing_path, diarization_segments)
             else:
                 log("Transcribing with local Whisper...")
-                segments = self._transcribe_hybrid(processing_path, log)
+                segments = self._transcribe_hybrid(processing_path, total_duration_sec, log)
 
             # Step 3: Align transcription with diarization
             log("Aligning transcription with speaker labels...")
@@ -328,15 +332,26 @@ class Pipeline:
     def _transcribe_hybrid(
         self,
         audio_path: Path,
+        total_duration: float,
         log: Callable[[str], None]
     ) -> list[TranscriptionSegment]:
         """Transcribe using hybrid local + OpenAI approach."""
         log("Running local Whisper transcription...")
-        segments = list(tqdm(
-            self.transcriber.transcribe(audio_path),
-            desc="Transcribing",
-            unit="seg"
-        ))
+
+        segments = []
+        with tqdm(total=100, desc="Transcribing", unit="%", bar_format="{l_bar}{bar}| {n:.0f}% [{elapsed}<{remaining}]") as pbar:
+            last_progress = 0
+            for seg in self.transcriber.transcribe(audio_path):
+                segments.append(seg)
+                # Update progress based on segment end time
+                progress = min(100, int((seg.end / total_duration) * 100))
+                if progress > last_progress:
+                    pbar.update(progress - last_progress)
+                    last_progress = progress
+            # Ensure we reach 100%
+            if last_progress < 100:
+                pbar.update(100 - last_progress)
+
         log(f"Local transcription: {len(segments)} segments")
 
         # Find segments needing OpenAI fallback
@@ -351,7 +366,8 @@ class Pipeline:
 
         if segments_to_refine:
             log(f"Refining {len(segments_to_refine)} segments with OpenAI...")
-            for seg in tqdm(segments_to_refine, desc="OpenAI refine", unit="seg"):
+            for seg in tqdm(segments_to_refine, desc="OpenAI refine", unit="seg",
+                          bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"):
                 try:
                     refined_text = self.openai_transcriber.transcribe_segment(
                         audio_path, seg.start, seg.end

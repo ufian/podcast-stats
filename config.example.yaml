@@ -34,3 +34,5 @@ diarization:
   model: "pyannote/speaker-diarization-3.1"
   # Embedding model for speaker matching
   embedding_model: "pyannote/embedding"
+  # Device for pyannote (auto, cpu, cuda, mps)
+  device: "auto"
