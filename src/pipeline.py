@@ -262,12 +262,12 @@ class Pipeline:
             )
 
             # Apply speaker mapping to segments
-            final_segments = []
+            mapped_segments = []
             for seg in aligned_segments:
                 detected_speaker = seg["speaker_id"]
                 mapped_speaker = speaker_mapping.get(detected_speaker, detected_speaker)
 
-                final_segments.append({
+                mapped_segments.append({
                     "start": seg["start"],
                     "end": seg["end"],
                     "speaker_id": mapped_speaker,
@@ -277,6 +277,10 @@ class Pipeline:
                     ),
                     "refined_by_openai": seg.get("refined_by_openai", False)
                 })
+
+            # Merge consecutive segments from the same speaker
+            final_segments = self._merge_speaker_segments(mapped_segments)
+            log(f"Merged {len(mapped_segments)} segments into {len(final_segments)} chunks")
 
             # Calculate stats
             openai_stats = self.openai_transcriber.get_usage_stats() if self._openai_transcriber else {}
@@ -511,6 +515,65 @@ class Pipeline:
         speech_score = 1 - no_speech_prob
         # Average the two
         return round((logprob_score + speech_score) / 2, 2)
+
+    def _merge_speaker_segments(
+        self,
+        segments: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Merge consecutive segments from the same speaker into larger chunks.
+
+        Args:
+            segments: List of segment dictionaries with speaker_id, text, etc.
+
+        Returns:
+            List of merged segments where consecutive same-speaker segments
+            are combined into single chunks.
+        """
+        if not segments:
+            return []
+
+        merged = []
+        current = None
+
+        for seg in segments:
+            if current is None:
+                # Start first chunk
+                current = {
+                    "start": seg["start"],
+                    "end": seg["end"],
+                    "speaker_id": seg["speaker_id"],
+                    "text": seg["text"],
+                    "confidence": seg["confidence"],
+                    "refined_by_openai": seg.get("refined_by_openai", False)
+                }
+            elif seg["speaker_id"] == current["speaker_id"]:
+                # Same speaker - extend current chunk
+                current["end"] = seg["end"]
+                current["text"] = current["text"] + " " + seg["text"]
+                # Average confidence
+                current["confidence"] = round(
+                    (current["confidence"] + seg["confidence"]) / 2, 2
+                )
+                # Mark as refined if any segment was refined
+                if seg.get("refined_by_openai"):
+                    current["refined_by_openai"] = True
+            else:
+                # Different speaker - save current and start new chunk
+                merged.append(current)
+                current = {
+                    "start": seg["start"],
+                    "end": seg["end"],
+                    "speaker_id": seg["speaker_id"],
+                    "text": seg["text"],
+                    "confidence": seg["confidence"],
+                    "refined_by_openai": seg.get("refined_by_openai", False)
+                }
+
+        # Don't forget the last chunk
+        if current is not None:
+            merged.append(current)
+
+        return merged
 
 
 def parse_duration(duration_str: str) -> float:
